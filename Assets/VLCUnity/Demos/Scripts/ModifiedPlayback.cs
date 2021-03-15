@@ -14,10 +14,10 @@ public class ModifiedPlayback : MonoBehaviour
     bool shuttingDown = false;
     ConcurrentQueue<string> workQueue = new ConcurrentQueue<string>();
     ConcurrentQueue<Media> mediaQueue = new ConcurrentQueue<Media>();
-    
+
     void Awake()
     {
-        Core.Initialize(Application.dataPath);        
+        Core.Initialize(Application.dataPath);
         _libVLC = new LibVLC("--no-osd", "--verbose=3");
         Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
         _libVLC.Log += (s, e) => UnityEngine.Debug.Log(e.FormattedLog); // enable this for logs in the editor
@@ -39,7 +39,7 @@ public class ModifiedPlayback : MonoBehaviour
         }
 
         // Force disposable of any floating media objects in our queue
-        for (int i=0; i<mediaQueue.Count;i++)
+        for (int i = 0; i < mediaQueue.Count; i++)
         {
             Media m;
             if (mediaQueue.TryDequeue(out m))
@@ -77,9 +77,9 @@ public class ModifiedPlayback : MonoBehaviour
             //_mediaPlayer.Media = m;
             //_mediaPlayer.Play();
             //playing = true;
-            
+
             // If m.Dispose is removed we still lock regardless
-            //m.Dispose();
+            m.Dispose();
         }
     }
 
