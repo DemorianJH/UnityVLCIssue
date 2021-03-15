@@ -1,67 +1,94 @@
 using UnityEngine;
 using System;
 using LibVLCSharp;
+using System.Threading.Tasks;
+using System.Collections.Concurrent;
+using System.Threading;
 
 public class ModifiedPlayback : MonoBehaviour
 {
-    LibVLC _libVLC;
-    MediaPlayer _mediaPlayer;
+    LibVLC _libVLC = null;
+    MediaPlayer _mediaPlayer = null;
     Texture2D tex = null;
     bool playing;
+    bool shuttingDown = false;
+    ConcurrentQueue<string> workQueue = new ConcurrentQueue<string>();
+    ConcurrentQueue<Media> mediaQueue = new ConcurrentQueue<Media>();
     
     void Awake()
     {
-        Core.Initialize(Application.dataPath);
-        
+        Core.Initialize(Application.dataPath);        
         _libVLC = new LibVLC("--no-osd", "--verbose=3");
-
         Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
         _libVLC.Log += (s, e) => UnityEngine.Debug.Log(e.FormattedLog); // enable this for logs in the editor
 
-        Play();
+        StartThread();
     }
 
-    void OnDisable() 
+    void OnDisable()
     {
-        _mediaPlayer?.Stop();
-        _mediaPlayer?.Dispose();
-        _mediaPlayer = null;
+        _mediaPlayer.Stop();
 
+        // Aggresively trying to dispose all the things  
+        if (_mediaPlayer.Media != null)
+        {
+            for (int i = 0; i < _mediaPlayer.Media.SubItems.Count; i++)
+            {
+                _mediaPlayer.Media.SubItems[i]?.Dispose();
+            }
+        }
+
+        // Force disposable of any floating media objects in our queue
+        for (int i=0; i<mediaQueue.Count;i++)
+        {
+            Media m;
+            if (mediaQueue.TryDequeue(out m))
+                m.Dispose();
+        }
+
+        // Explicitly remove the current media item
+        _mediaPlayer?.Media?.Dispose();
+        _mediaPlayer?.Dispose();
         _libVLC?.Dispose();
-        _libVLC = null;
     }
 
-    public async void Play()
+    public void StartThread()
+    {
+        workQueue.Enqueue("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
+        Thread t = new Thread(new ThreadStart(ThreadedMediaParse));
+        t.Start();
+    }
+
+    void PlayFromQueue()
     {
         if (_mediaPlayer == null)
         {
             _mediaPlayer = new MediaPlayer(_libVLC);
         }
 
-        var media = new Media(_libVLC, new Uri("http://www.youtube.com/watch?v=NTZlfJ2Tpy0"));
-
-        // Parse with ParseNetwork appears to lock the editor from closing after first run,
-        // and locks completely trying to run in editor a second time. 2019.4.18f1 LTS
-        await media.Parse(MediaParseOptions.ParseNetwork);
-
-        if (media.SubItems.Count > 0)
+        Media m;
+        if (mediaQueue.TryDequeue(out m))
         {
-            _mediaPlayer.Media = media.SubItems[0];
-        }
-        else
-        {
-            _mediaPlayer.Media = media;
-        }
+            // Unable to correctly dispose this media object if sent to the player
+            // Explicitly destroying the media object as its dequeued also toggles the locking
 
-        media.Dispose();
-
-        _mediaPlayer.Play();
-        playing = true;
+            // Assigning the media object to the media player then causes the lock 
+            // - presumably the created object isn't getting cleaned up
+            //_mediaPlayer.Media = m;
+            //_mediaPlayer.Play();
+            //playing = true;
+            
+            // If m.Dispose is removed we still lock regardless
+            //m.Dispose();
+        }
     }
 
     void Update()
     {
-        if(!playing) return;
+        // Check for media items to start playing
+        PlayFromQueue();
+
+        if (!playing) return;
 
         if (tex == null)
         {
@@ -92,4 +119,50 @@ public class ModifiedPlayback : MonoBehaviour
             }
         }
     }
+
+    private void OnDestroy()
+    {
+        shuttingDown = true;
+    }
+
+    /// <summary>
+    /// Use this to try and parse media items in isolation
+    /// </summary>
+    public void ThreadedMediaParse()
+    {
+        while (shuttingDown == false)
+        {
+            string url;
+
+            while (_libVLC != null && workQueue.TryDequeue(out url))
+            {
+                var media = new Media(_libVLC, new Uri(url));
+                var result = media.Parse(MediaParseOptions.ParseNetwork);
+
+                while (media.ParsedStatus != MediaParsedStatus.Done)
+                {
+                    // Should use the parsed event but fine for testing
+                    Thread.Sleep(1);
+                }
+
+                if (media.SubItems.Count > 0)
+                {
+                    mediaQueue.Enqueue(media.SubItems[0].Duplicate());
+
+                    // Try and clean up anything unwanted asap except our clean copy in the queue
+                    for (int i = 0; i < media.SubItems.Count; i++)
+                        media.SubItems[i].Dispose();
+                }
+                else
+                {
+                    mediaQueue.Enqueue(media.Duplicate());
+                }
+
+                media.Dispose();
+            }
+
+            Thread.Sleep(50);
+        }
+    }
 }
+
