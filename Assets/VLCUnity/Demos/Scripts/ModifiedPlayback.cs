@@ -29,15 +29,6 @@ public class ModifiedPlayback : MonoBehaviour
     {
         _mediaPlayer.Stop();
 
-        // Aggresively trying to dispose all the things  
-        if (_mediaPlayer.Media != null)
-        {
-            for (int i = 0; i < _mediaPlayer.Media.SubItems.Count; i++)
-            {
-                _mediaPlayer.Media.SubItems[i]?.Dispose();
-            }
-        }
-
         // Force disposable of any floating media objects in our queue
         for (int i = 0; i < mediaQueue.Count; i++)
         {
@@ -46,10 +37,10 @@ public class ModifiedPlayback : MonoBehaviour
                 m.Dispose();
         }
 
-        // Explicitly remove the current media item
-        _mediaPlayer?.Media?.Dispose();
         _mediaPlayer?.Dispose();
+        _mediaPlayer = null;
         _libVLC?.Dispose();
+        _libVLC = null;
     }
 
     public void StartThread()
@@ -74,9 +65,9 @@ public class ModifiedPlayback : MonoBehaviour
 
             // Assigning the media object to the media player then causes the lock 
             // - presumably the created object isn't getting cleaned up
-            //_mediaPlayer.Media = m;
-            //_mediaPlayer.Play();
-            //playing = true;
+            _mediaPlayer.Media = m;
+            _mediaPlayer.Play();
+            playing = true;
 
             // If m.Dispose is removed we still lock regardless
             m.Dispose();
@@ -145,24 +136,10 @@ public class ModifiedPlayback : MonoBehaviour
                     Thread.Sleep(1);
                 }
 
-                if (media.SubItems.Count > 0)
-                {
-                    mediaQueue.Enqueue(media.SubItems[0].Duplicate());
-
-                    // Try and clean up anything unwanted asap except our clean copy in the queue
-                    for (int i = 0; i < media.SubItems.Count; i++)
-                        media.SubItems[i].Dispose();
-                }
-                else
-                {
-                    mediaQueue.Enqueue(media.Duplicate());
-                }
-
-                media.Dispose();
+                mediaQueue.Enqueue(media);
             }
 
             Thread.Sleep(50);
         }
     }
 }
-
