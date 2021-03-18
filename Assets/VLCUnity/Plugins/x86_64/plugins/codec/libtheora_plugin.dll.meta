@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: d9f2ea2a150c599488ab505bb5472d97
+guid: 771c21cd027d47b418264ef1ced7080a
 PluginImporter:
   externalObjects: {}
   serializedVersion: 2
@@ -28,7 +28,7 @@ PluginImporter:
     second:
       enabled: 1
       settings:
-        CPU: x86_64
+        CPU: AnyCPU
   - first:
       Standalone: OSXUniversal
     second:
