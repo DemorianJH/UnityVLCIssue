@@ -17,10 +17,6 @@ public class ModifiedPlayback : MonoBehaviour
                EntryPoint = "libvlc_media_release")]
     internal static extern void LibVLCMediaRelease(IntPtr media);
 
-    [DllImport("libvlc", CallingConvention = CallingConvention.Cdecl,
-        EntryPoint = "libvlc_media_list_release")]
-    internal static extern void LibVLCMediaListRelease(IntPtr mediaList);
-
     void Awake()
     {
         Core.Initialize(Application.dataPath);
@@ -74,23 +70,22 @@ public class ModifiedPlayback : MonoBehaviour
                 ClearCurrentMediaExtra();
             }
 
-            if (media.SubItems.Count > 0)
+            MediaList subItems = media.SubItems;
+
+            if (subItems.Count > 0)
             {
                 // As used by a youtube url
-                MediaList ml = media.SubItems;
-                Media newMedia = ml[0]; // reference increment 
+                Media newMedia = subItems[0]; // reference increment 
                 _mediaPlayer.Media = newMedia;
                 newMedia.Dispose();
-
-                // Extra release because of this annoying bug.
-                LibVLCMediaListRelease(ml.NativeReference);
-                ml.Dispose();
             }
             else
             {
                 // As used by bunny film
                 _mediaPlayer.Media = media;
             }
+
+            subItems.Dispose();
         }
 
         media.Dispose();
