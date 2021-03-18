@@ -1,19 +1,25 @@
 using UnityEngine;
 using System;
 using LibVLCSharp;
-using System.Threading.Tasks;
-using System.Collections.Concurrent;
-using System.Threading;
+using System.Runtime.InteropServices;
 
 public class ModifiedPlayback : MonoBehaviour
 {
+    [SerializeField] private bool playNewMedia = false;
+    [SerializeField] private string playNext;
+
     LibVLC _libVLC = null;
     MediaPlayer _mediaPlayer = null;
     Texture2D tex = null;
-    bool playing;
-    bool shuttingDown = false;
-    ConcurrentQueue<string> workQueue = new ConcurrentQueue<string>();
-    ConcurrentQueue<Media> mediaQueue = new ConcurrentQueue<Media>();
+    bool currentMediaWasParsed = false;
+
+    [DllImport("libvlc", CallingConvention = CallingConvention.Cdecl,
+               EntryPoint = "libvlc_media_release")]
+    internal static extern void LibVLCMediaRelease(IntPtr media);
+
+    [DllImport("libvlc", CallingConvention = CallingConvention.Cdecl,
+        EntryPoint = "libvlc_media_list_release")]
+    internal static extern void LibVLCMediaListRelease(IntPtr mediaList);
 
     void Awake()
     {
@@ -22,20 +28,15 @@ public class ModifiedPlayback : MonoBehaviour
         Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
         _libVLC.Log += (s, e) => UnityEngine.Debug.Log(e.FormattedLog); // enable this for logs in the editor
 
-        StartThread();
+        ChangeMedia("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
     }
 
     void OnDisable()
     {
         _mediaPlayer.Stop();
 
-        // Force disposable of any floating media objects in our queue
-        for (int i = 0; i < mediaQueue.Count; i++)
-        {
-            Media m;
-            if (mediaQueue.TryDequeue(out m))
-                m.Dispose();
-        }
+        if (currentMediaWasParsed) // Extra ref decrement if the currently playing media was a parsed one
+            ClearCurrentMediaExtra();
 
         _mediaPlayer?.Dispose();
         _mediaPlayer = null;
@@ -43,43 +44,76 @@ public class ModifiedPlayback : MonoBehaviour
         _libVLC = null;
     }
 
-    public void StartThread()
+    // Makes an extra reference release on the media item to account for a bug in parsed streams (perhaps other media?)
+    private void ClearCurrentMediaExtra()
     {
-        workQueue.Enqueue("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
-        Thread t = new Thread(new ThreadStart(ThreadedMediaParse));
-        t.Start();
+        Media media = _mediaPlayer.Media;
+        if (media != null)
+        {
+            LibVLCMediaRelease(media.NativeReference);
+            media.Dispose();
+        }
     }
 
-    void PlayFromQueue()
+    public async void ChangeMedia(string url)
     {
         if (_mediaPlayer == null)
         {
             _mediaPlayer = new MediaPlayer(_libVLC);
         }
 
-        Media m;
-        if (mediaQueue.TryDequeue(out m))
+        Media media = new Media(_libVLC, new Uri(url));
+
+        await media.Parse(MediaParseOptions.ParseNetwork);
+
+        if (media.ParsedStatus == MediaParsedStatus.Done)
         {
-            // Unable to correctly dispose this media object if sent to the player
-            // Explicitly destroying the media object as its dequeued also toggles the locking
+            // First do a deeper cleanup of any existing media item - a VLC bug means it won't fully release the existing media on a mediaplayer
+            if (currentMediaWasParsed)
+            {
+                ClearCurrentMediaExtra();
+            }
 
-            // Assigning the media object to the media player then causes the lock 
-            // - presumably the created object isn't getting cleaned up
-            _mediaPlayer.Media = m;
-            _mediaPlayer.Play();
-            playing = true;
+            if (media.SubItems.Count > 0)
+            {
+                // As used by a youtube url
+                MediaList ml = media.SubItems;
+                Media newMedia = ml[0]; // reference increment 
+                _mediaPlayer.Media = newMedia;
+                newMedia.Dispose();
 
-            // If m.Dispose is removed we still lock regardless
-            m.Dispose();
+                // Extra release because of this annoying bug.
+                LibVLCMediaListRelease(ml.NativeReference);
+                ml.Dispose();
+            }
+            else
+            {
+                // As used by bunny film
+                _mediaPlayer.Media = media;
+            }
         }
+
+        media.Dispose();
+
+        currentMediaWasParsed = true;     
+
+        _mediaPlayer.Play();        
     }
+
 
     void Update()
     {
-        // Check for media items to start playing
-        PlayFromQueue();
+        if (playNewMedia) // Change next url in unity inspector
+        {
+            ChangeMedia(playNext);
+            playNewMedia = false;
+        }
 
-        if (!playing) return;
+#if UNITY_EDITOR
+        _mediaPlayer.Mute = UnityEditor.EditorUtility.audioMasterMute;
+#endif
+
+        if (_mediaPlayer == null || !_mediaPlayer.IsPlaying) return;
 
         if (tex == null)
         {
@@ -108,38 +142,6 @@ public class ModifiedPlayback : MonoBehaviour
             {
                 tex.UpdateExternalTexture(texptr);
             }
-        }
-    }
-
-    private void OnDestroy()
-    {
-        shuttingDown = true;
-    }
-
-    /// <summary>
-    /// Use this to try and parse media items in isolation
-    /// </summary>
-    public void ThreadedMediaParse()
-    {
-        while (shuttingDown == false)
-        {
-            string url;
-
-            while (_libVLC != null && workQueue.TryDequeue(out url))
-            {
-                var media = new Media(_libVLC, new Uri(url));
-                var result = media.Parse(MediaParseOptions.ParseNetwork);
-
-                while (media.ParsedStatus != MediaParsedStatus.Done)
-                {
-                    // Should use the parsed event but fine for testing
-                    Thread.Sleep(1);
-                }
-
-                mediaQueue.Enqueue(media);
-            }
-
-            Thread.Sleep(50);
         }
     }
 }

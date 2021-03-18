@@ -431,6 +431,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 39d07c8e91c50e04e8ae6f001c1870d1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  playNewMedia: 0
+  playNext: https://www.youtube.com/watch?v=Kt-tLuszKBA
 --- !u!1 &1904493627
 GameObject:
   m_ObjectHideFlags: 0
